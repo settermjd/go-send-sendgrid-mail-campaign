@@ -14,122 +14,136 @@ import (
 	sendgrid "github.com/sendgrid/sendgrid-go"
 )
 
-const SendGridBaseUrl string = "https://api.sendgrid.com"
-const SendGridBasePath string = "/v3/marketing/"
+const sendGridBaseURL string = "https://api.sendgrid.com"
+const sendGridBasePath string = "/v3/marketing/"
 
-type SendGridMessage struct {
-	Categories  []string    `json:"categories,omitempty"`
-	EmailConfig EmailConfig `json:"email_config,omitempty"`
-	Name        string      `json:"name"`
-	SendAt      string      `json:"send_at,omitempty"`
-	SendTo      Recipient   `json:"send_to,omitempty"`
+type sendGridCampaignMessage struct {
+	categories  []string    `json:"categories,omitempty"`
+	emailConfig emailConfig `json:"email_config,omitempty"`
+	name        string      `json:"name"`
+	sendAt      string      `json:"send_at,omitempty"`
+	sendTo      recipient   `json:"send_to,omitempty"`
 }
 
-type Recipient struct {
-	All        bool     `json:"all,omitempty"`
-	ListIds    []string `json:"list_ids,omitempty"`
-	SegmentIds []string `json:"segment_ids,omitempty"`
+type recipient struct {
+	all        bool     `json:"all,omitempty"`
+	listIDs    []string `json:"list_ids,omitempty"`
+	segmentIDs []string `json:"segment_ids,omitempty"`
 }
 
-type EmailConfig struct {
-	CustomUnsubscribeUrl string `json:"custom_unsubscribe_url,omitempty"`
-	DesignId             string `json:"design_id,omitempty"`
-	Editor               string `json:"omitempty"`
-	GeneratePlainContent bool   `json:"generate_plain_content,omitempty"`
-	HtmlContent          string `json:"html_content"`
-	IpPool               string `json:"ip_pool,omitempty"`
-	PlainContent         string `json:"plain_content"`
-	SenderId             int    `json:"sender_id"`
-	Subject              string
-	SuppressionGroupId   int `json:"suppression_group_id,omitempty"`
+type emailConfig struct {
+	customUnsubscribeURL string `json:"custom_unsubscribe_url,omitempty"`
+	designId             string `json:"design_id,omitempty"`
+	editor               string `json:"editor,omitempty"`
+	generatePlainContent bool   `json:"generate_plain_content,omitempty"`
+	htmlContent          string `json:"html_content"`
+	ipPool               string `json:"ip_pool,omitempty"`
+	plainContent         string `json:"plain_content"`
+	senderID             int    `json:"sender_id"`
+	subject              string `json:"subject"`
+	suppressionGroupId   int    `json:"suppression_group_id,omitempty"`
 }
 
-type CreateMessageResponse struct {
+type createMessageResponse struct {
 	ID string `json:"id"`
 }
 
-type SendMessageBody struct {
-	SendAt string `json:"send_at"`
+type sendMessageBody struct {
+	sendAt string `json:"send_at"`
 }
 
-// CreateCampaign creates a campaign to be sent at a later time
-func CreateCampaign(apiKey string, listId string) (*rest.Response, error) {
+type CampaignManager struct {
+	apiKey string
+}
+
+// CreateCampaign creates a SendGrid email campaign to be sent at a later time
+func (c *CampaignManager) CreateCampaign(listID string) (*rest.Response, error) {
 	// Get the content to send
 	templateFile := "./templates/campaign/html-body.html"
 	htmlBodyTemplate, err := template.ParseFiles(templateFile)
 	if err != nil {
-		log.Fatalf("Unable to parse HTML template: %s", templateFile)
+		return nil, err
 	}
+
 	var tpl bytes.Buffer
 	err = htmlBodyTemplate.Execute(&tpl, nil)
 	if err != nil {
-		log.Fatalf("Could not retrieve template data. Reason: %s", err)
+		return nil, err
 	}
 
-	message := &SendGridMessage{
-		Name: "Summer Products Campaign",
-		SendTo: Recipient{
-			ListIds: []string{listId},
+	message := &sendGridCampaignMessage{
+		name: "Summer Products Campaign",
+		sendTo: recipient{
+			listIDs: []string{listID},
 		},
-		EmailConfig: EmailConfig{
-			Subject:              "New Products for Summer!",
-			HtmlContent:          tpl.String(),
-			CustomUnsubscribeUrl: "https://matthewsetter.com/unsubscribe",
-			SenderId:             1409812,
+		emailConfig: emailConfig{
+			subject:              "New Products for Summer!",
+			htmlContent:          tpl.String(),
+			customUnsubscribeURL: "https://matthewsetter.com/unsubscribe",
+			senderID:             1409812,
 		},
 	}
 
-	request := sendgrid.GetRequest(apiKey, SendGridBasePath+"singlesends", SendGridBaseUrl)
+	request := sendgrid.GetRequest(c.apiKey, sendGridBasePath+"singlesends", sendGridBaseURL)
 	request.Method = "POST"
 
 	body, err := json.Marshal(message)
 	if err != nil {
-		log.Fatal("Unable to create email message body in JSON format.")
+		return nil, err
 	}
 
 	request.Body = []byte(body)
-	response, err := sendgrid.API(request)
 
-	return response, err
+	return sendgrid.API(request)
 }
 
-// ScheduleCampaign schedules a created campaign to be sent
-func ScheduleCampaign(apiKey string, response *rest.Response) (*rest.Response, error) {
-	var responseBody CreateMessageResponse
-	json.Unmarshal([]byte(response.Body), &responseBody)
-	fmt.Printf("Response : %+v", responseBody.ID)
+// ScheduleCampaign schedules a created SendGrid email campaign to be sent
+func (c *CampaignManager) ScheduleCampaign(response *rest.Response) (*rest.Response, error) {
+	var responseBody createMessageResponse
+	err := json.Unmarshal([]byte(response.Body), &responseBody)
+	if err != nil {
+		return nil, err
+	}
 
 	sendAt := time.Now().Add(time.Minute * 3).Format(time.RFC3339)
-	sendCampaignBody := &SendMessageBody{SendAt: sendAt}
+	sendCampaignBody := &sendMessageBody{sendAt: sendAt}
 	sendBody, err := json.Marshal(sendCampaignBody)
 	if err != nil {
-		log.Fatal("Could not create send campaign body")
+		return nil, err
 	}
 
 	request := sendgrid.GetRequest(
-		apiKey,
-		fmt.Sprintf(SendGridBasePath+"singlesends/%s/schedule", responseBody.ID),
-		SendGridBaseUrl,
+		c.apiKey,
+		fmt.Sprintf(sendGridBasePath+"singlesends/%s/schedule", responseBody.ID),
+		sendGridBaseURL,
 	)
 	request.Method = "PUT"
 	request.Body = []byte(sendBody)
-	response, err = sendgrid.API(request)
 
-	return response, err
+	return sendgrid.API(request)
+}
+
+func (c *CampaignManager) SendCampaign() error {
+	response, err := c.CreateCampaign(os.Getenv("SENDGRID_LIST_ID"))
+	if err != nil {
+		return fmt.Errorf("Could not schedule campaign. Reason: %w", err)
+	}
+	log.Println("Campaign scheduled")
+
+	response, err = c.ScheduleCampaign(response)
+	if err != nil {
+		return fmt.Errorf("Could not send campaign. Reason: %w", err)
+	}
+	log.Println("Campaign sent")
+
+	return nil
 }
 
 func main() {
-	godotenv.Load()
-
-	apiKey := os.Getenv("SENDGRID_API_KEY")
-
-	response, err := CreateCampaign(apiKey, os.Getenv("SENDGRID_LIST_ID"))
+	err := godotenv.Load()
 	if err != nil {
-		fmt.Printf("Could not schedule campaign. Status: %i. Reason: %s", response.StatusCode, err)
+		log.Fatal("Error loading .env file")
 	}
-
-	response, err = ScheduleCampaign(apiKey, response)
-	if err != nil {
-		fmt.Printf("Could not send campaign. Status: %i. Reason: %s", response.StatusCode, err)
-	}
+	cm := CampaignManager{apiKey: os.Getenv("SENDGRID_API_KEY")}
+	cm.SendCampaign()
 }
